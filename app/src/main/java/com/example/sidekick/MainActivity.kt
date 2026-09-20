@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,30 +18,19 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AddCard
 import androidx.compose.material.icons.filled.AddShoppingCart
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -53,7 +41,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
-import kotlin.math.max
 
 // ─── Data Models ─────────────────────────────────────────────────────────────
 
@@ -97,7 +84,9 @@ data class DebtItem(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val startingBalance: Double,
-    val currentBalance: Double
+    val currentBalance: Double,
+    val lastPaymentDate: String = "",
+    val lastPaymentAmount: Double = 0.0
 )
 
 // ─── CSV Helpers ──────────────────────────────────────────────────────────────
@@ -258,18 +247,22 @@ object CsvStore {
             if (cols.size < 4) return@mapNotNull null
             try {
                 DebtItem(
-                    id               = cols[0],
-                    name             = cols[1],
-                    startingBalance  = cols[2].toDouble(),
-                    currentBalance   = cols[3].toDouble()
+                    id                = cols[0],
+                    name              = cols[1],
+                    startingBalance   = cols[2].toDouble(),
+                    currentBalance    = cols[3].toDouble(),
+                    lastPaymentAmount = cols.getOrNull(4)?.toDoubleOrNull() ?: 0.0,
+                    lastPaymentDate   = cols.getOrNull(5) ?: ""
                 )
             } catch (e: Exception) { null }
         }
     }
 
     fun saveGlobalDebts(context: android.content.Context, debts: List<DebtItem>) {
-        val sb = StringBuilder("id,name,startingBalance,currentBalance\n")
-        debts.forEach { d -> sb.append("${d.id},${d.name.escapeCsv()},${d.startingBalance},${d.currentBalance}\n") }
+        val sb = StringBuilder("id,name,startingBalance,currentBalance,lastPaymentAmount,lastPaymentDate\n")
+        debts.forEach { d ->
+            sb.append("${d.id},${d.name.escapeCsv()},${d.startingBalance},${d.currentBalance},${d.lastPaymentAmount},${d.lastPaymentDate}\n")
+        }
         globalDebtsFile(context).writeText(sb.toString())
     }
 
@@ -712,6 +705,13 @@ fun DebtTrackerTab(debts: List<DebtItem>, onSaveDebts: (List<DebtItem>) -> Unit)
                                         Icon(Icons.Default.Delete, contentDescription = "Remove debt", tint = Color(0xFFB71C1C), modifier = Modifier.size(18.dp))
                                     }
                                 }
+                                if (debt.lastPaymentAmount > 0) {
+                                    Text(
+                                        "Last payment: ${formatMoney(debt.lastPaymentAmount)} on ${debt.lastPaymentDate}",
+                                        fontSize = 11.sp,
+                                        color = Color.Gray
+                                    )
+                                }
                                 LinearProgressIndicator(
                                     progress = { fraction },
                                     modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
@@ -721,7 +721,9 @@ fun DebtTrackerTab(debts: List<DebtItem>, onSaveDebts: (List<DebtItem>) -> Unit)
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("${formatMoney(debt.currentBalance)} left of ${formatMoney(debt.startingBalance)}", fontSize = 14.sp, color = Color.Black)
                                     TextButton(onClick = { payingDebt = debt }, enabled = debt.currentBalance > 0) { Text("Record Payment") }
+
                                 }
+
                             }
                         }
                     }
@@ -751,7 +753,14 @@ fun DebtTrackerTab(debts: List<DebtItem>, onSaveDebts: (List<DebtItem>) -> Unit)
             onDismiss = { payingDebt = null },
             onRecord = { paymentAmount ->
                 val newBalance = (debt.currentBalance - paymentAmount).coerceAtLeast(0.0)
-                onSaveDebts(debts.map { if (it.id == debt.id) it.copy(currentBalance = newBalance) else it })
+                val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                onSaveDebts(debts.map {
+                    if (it.id == debt.id) it.copy(
+                        currentBalance    = newBalance,
+                        lastPaymentAmount = paymentAmount,
+                        lastPaymentDate   = today
+                    ) else it
+                })
                 payingDebt = null
             }
         )
